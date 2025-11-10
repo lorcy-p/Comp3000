@@ -1,0 +1,5 @@
+/venv
+/YOLO11Trainer/data
+/YOLO11Trainer/runs
+/YOLO11Trainer/Yolo-Weights
+.vscode/settings.json

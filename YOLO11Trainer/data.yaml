@@ -1,0 +1,10 @@
+# upodate to personal file paths
+
+
+path : C:\Users\lorca\Documents\GitHub\Comp3000\YOLO11Trainer\data
+train : train\images
+val : valid\images
+
+nc : 1
+
+names : ['basketball']
