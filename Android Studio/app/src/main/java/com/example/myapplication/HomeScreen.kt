@@ -1,5 +1,8 @@
 package com.example.app.ui.home
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,14 +15,25 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.NavController
 
 @Composable
 fun HomeScreen(
     modifier: Modifier = Modifier,
+    navController: NavController? = null,
     onRecordClick: () -> Unit = {},
-    onUploadClick: () -> Unit = {},
     onViewSessionsClick: () -> Unit = {}
 ) {
+    // Video picker launcher
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            // Navigate to processing screen with video URI
+            navController?.navigate("processing/${Uri.encode(it.toString())}")
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -57,7 +71,7 @@ fun HomeScreen(
             HomeActionButton(
                 text = "Upload Video",
                 icon = android.R.drawable.ic_menu_slideshow,
-                onClick = onUploadClick
+                onClick = { videoPickerLauncher.launch("video/*") }
             )
 
             Spacer(modifier = Modifier.height(24.dp))
