@@ -17,6 +17,13 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+            cmake {
+                cppFlags ("")
+            }
+        }
+
     }
 
     buildTypes {
@@ -38,7 +45,17 @@ android {
     buildFeatures {
         compose = true
     }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
+
+
 }
+
+
 
 dependencies {
 
@@ -50,6 +67,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.camera.core)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -73,5 +91,15 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite:2.12.0")
     implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.0")
     implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.12.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.14.0")
+
+    //media
+    implementation("androidx.media3:media3-exoplayer:1.2.1")
+    implementation("androidx.media3:media3-ui:1.2.1")
+    implementation("androidx.media3:media3-common:1.2.1")
+
+    implementation("org.yaml:snakeyaml:2.2")
+
+
 }
