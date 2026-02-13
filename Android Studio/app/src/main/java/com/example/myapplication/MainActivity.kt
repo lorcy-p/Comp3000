@@ -12,7 +12,7 @@ import androidx.navigation.NavType
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import com.example.app.ui.home.HomeScreen
 import com.example.app.ui.processing.VideoProcessingScreen
-import com.example.app.ui.detection.VideoDetectionScreen
+import com.example.myapplication.detection.VideoDetectionScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

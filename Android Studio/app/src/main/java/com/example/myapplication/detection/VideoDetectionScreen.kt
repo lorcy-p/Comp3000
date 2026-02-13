@@ -1,11 +1,11 @@
-package com.example.app.ui.detection
+package com.example.myapplication.detection
 
-import android.content.Context
 import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
-import android.util.AttributeSet
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.VideoView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -18,21 +18,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 import androidx.navigation.NavController
 import kotlinx.coroutines.*
 import org.tensorflow.lite.examples.objectdetection.ObjectDetectorHelper
-import org.tensorflow.lite.examples.objectdetection.OverlayView
+import org.tensorflow.lite.examples.objectdetection.VideoOverlayView
 import org.tensorflow.lite.examples.objectdetection.detectors.ObjectDetection
-import org.tensorflow.lite.support.image.ImageProcessor
-import org.tensorflow.lite.support.image.TensorImage
 
 /**
  * Screen that displays a video with real-time YOLO object detection overlay.
- * Uses ExoPlayer for video playback and OverlayView for drawing bounding boxes.
+ * Matches the camera fragment approach for proper bounding box alignment.
  */
 @Composable
 fun VideoDetectionScreen(
@@ -48,17 +42,30 @@ fun VideoDetectionScreen(
     var detectionResults by remember { mutableStateOf<List<ObjectDetection>>(emptyList()) }
     var imageWidth by remember { mutableStateOf(0) }
     var imageHeight by remember { mutableStateOf(0) }
+    var isPlaying by remember { mutableStateOf(true) }
     
-    // Frame processor for extracting video frames
-    val frameProcessor = remember { VideoFrameProcessor(context) }
+    // Video dimensions
+    var videoWidth by remember { mutableStateOf(0) }
+    var videoHeight by remember { mutableStateOf(0) }
     
-    // ExoPlayer instance
-    val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(videoUri))
-            prepare()
-            playWhenReady = true
-            repeatMode = Player.REPEAT_MODE_ALL
+    // View references
+    var videoView by remember { mutableStateOf<VideoView?>(null) }
+    var overlayView by remember { mutableStateOf<VideoOverlayView?>(null) }
+    var containerView by remember { mutableStateOf<FrameLayout?>(null) }
+    
+    // Frame extractor
+    var mediaRetriever by remember { mutableStateOf<MediaMetadataRetriever?>(null) }
+    
+    // Initialize media retriever
+    LaunchedEffect(videoUri) {
+        withContext(Dispatchers.IO) {
+            try {
+                mediaRetriever = MediaMetadataRetriever().apply {
+                    setDataSource(context, videoUri)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
     
@@ -66,7 +73,7 @@ fun VideoDetectionScreen(
     val detectorListener = remember {
         object : ObjectDetectorHelper.DetectorListener {
             override fun onError(error: String) {
-                // Handle error - could show a toast or log
+                // Handle error
             }
             
             override fun onResults(
@@ -87,7 +94,7 @@ fun VideoDetectionScreen(
         ObjectDetectorHelper(
             threshold = 0.5f,
             numThreads = 2,
-            maxResults = 5,
+            maxResults = 10,
             currentDelegate = ObjectDetectorHelper.DELEGATE_CPU,
             currentModel = ObjectDetectorHelper.MODEL_YOLO,
             context = context,
@@ -95,27 +102,43 @@ fun VideoDetectionScreen(
         )
     }
     
-    // Initialize frame processor and start detection loop
-    LaunchedEffect(videoUri) {
-        frameProcessor.initialize(videoUri)
-    }
-    
-    // Detection coroutine - extracts frames and runs detection
-    LaunchedEffect(isDetecting) {
-        if (isDetecting) {
+    // Detection coroutine
+    LaunchedEffect(isDetecting, videoView, mediaRetriever) {
+        if (isDetecting && videoView != null && mediaRetriever != null) {
             while (isActive && isDetecting) {
                 try {
-                    val currentPosition = exoPlayer.currentPosition
-                    val frame = frameProcessor.getFrameAtTime(currentPosition)
+                    val currentPosition = videoView?.currentPosition?.toLong() ?: 0L
                     
-                    frame?.let { bitmap ->
-                        // Run detection on the frame
-                        withContext(Dispatchers.Default) {
-                            objectDetectorHelper.detect(bitmap, 0)
+                    // Extract frame at current position
+                    val frame = withContext(Dispatchers.IO) {
+                        try {
+                            mediaRetriever?.getFrameAtTime(
+                                currentPosition * 1000, // Convert to microseconds
+                                MediaMetadataRetriever.OPTION_CLOSEST
+                            )
+                        } catch (e: Exception) {
+                            null
                         }
                     }
                     
-                    // Control detection frame rate (~10 fps for detection)
+                    frame?.let { bitmap ->
+                        // Run detection (similar to camera fragment)
+                        withContext(Dispatchers.Default) {
+                            objectDetectorHelper.detect(bitmap, 0) // 0 rotation for video
+                        }
+                        
+                        // Update overlay on main thread (matching camera fragment approach)
+                        withContext(Dispatchers.Main) {
+                            overlayView?.setResults(
+                                detectionResults,
+                                imageHeight,
+                                imageWidth
+                            )
+                            overlayView?.invalidate()
+                        }
+                    }
+                    
+                    // Detection at ~10 FPS
                     delay(100)
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -129,8 +152,11 @@ fun VideoDetectionScreen(
     DisposableEffect(Unit) {
         onDispose {
             isDetecting = false
-            exoPlayer.release()
-            frameProcessor.release()
+            try {
+                mediaRetriever?.release()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
             objectDetectorHelper.clearObjectDetector()
         }
     }
@@ -140,58 +166,108 @@ fun VideoDetectionScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // Video player with overlay
+        // Video container - takes up available space between controls
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .align(Alignment.Center)
+                .fillMaxSize()
+                .padding(top = 70.dp, bottom = 150.dp),
+            contentAlignment = Alignment.Center
         ) {
-            // ExoPlayer view
             AndroidView(
                 factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        player = exoPlayer
-                        useController = true
+                    FrameLayout(ctx).apply {
                         layoutParams = FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-            
-            // Detection overlay
-            AndroidView(
-                factory = { ctx ->
-                    OverlayView(ctx, null).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                    }
-                },
-                update = { overlayView ->
-                    if (imageWidth > 0 && imageHeight > 0) {
-                        overlayView.setResults(detectionResults, imageHeight, imageWidth)
-                        overlayView.invalidate()
+                        containerView = this
+                        
+                        // VideoView
+                        val video = VideoView(ctx).apply {
+                            layoutParams = FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            ).apply {
+                                gravity = android.view.Gravity.CENTER
+                            }
+                            
+                            setVideoURI(videoUri)
+                            
+                            setOnPreparedListener { mp ->
+                                mp.isLooping = true
+                                
+                                // Get video dimensions
+                                videoWidth = mp.videoWidth
+                                videoHeight = mp.videoHeight
+                                
+                                // Calculate proper sizing to fit within container
+                                post {
+                                    val containerWidth = containerView?.width ?: width
+                                    val containerHeight = containerView?.height ?: height
+                                    
+                                    if (containerWidth > 0 && containerHeight > 0 && videoWidth > 0 && videoHeight > 0) {
+                                        val videoAspect = videoWidth.toFloat() / videoHeight
+                                        val containerAspect = containerWidth.toFloat() / containerHeight
+                                        
+                                        val displayWidth: Int
+                                        val displayHeight: Int
+                                        
+                                        if (videoAspect > containerAspect) {
+                                            // Video is wider - fit to width
+                                            displayWidth = containerWidth
+                                            displayHeight = (containerWidth / videoAspect).toInt()
+                                        } else {
+                                            // Video is taller - fit to height
+                                            displayHeight = containerHeight
+                                            displayWidth = (containerHeight * videoAspect).toInt()
+                                        }
+                                        
+                                        // Update VideoView size
+                                        val videoLp = this.layoutParams as FrameLayout.LayoutParams
+                                        videoLp.width = displayWidth
+                                        videoLp.height = displayHeight
+                                        videoLp.gravity = android.view.Gravity.CENTER
+                                        this.layoutParams = videoLp
+                                        
+                                        
+                                    }
+                                }
+                                
+                                start()
+                            }
+                        }
+                        addView(video)
+                        videoView = video
+                        
+                        // VideoOverlayView on top - designed for video FIT mode
+                        val overlay = VideoOverlayView(ctx, null).apply {
+                            layoutParams = FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            ).apply {
+                                gravity = android.view.Gravity.CENTER
+                            }
+                            // Make overlay transparent for click-through
+                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        }
+                        addView(overlay)
+                        overlayView = overlay
                     }
                 },
                 modifier = Modifier.fillMaxSize()
             )
         }
         
-        // Top bar with inference time and back button
+        // Top bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .background(Color.Black.copy(alpha = 0.7f))
+                .padding(12.dp)
                 .align(Alignment.TopCenter),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Back button
             Button(
                 onClick = { navController?.navigateUp() },
                 colors = ButtonDefaults.buttonColors(
@@ -202,17 +278,19 @@ fun VideoDetectionScreen(
                 Text("← Back")
             }
             
-            // Inference time display
-            Surface(
-                color = Color(0xFF1C1C1E),
-                shape = MaterialTheme.shapes.small
-            ) {
+            Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = "Inference: ${inferenceTime}ms",
                     color = Color.White,
-                    fontSize = 14.sp,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    fontSize = 14.sp
                 )
+                if (videoWidth > 0) {
+                    Text(
+                        text = "Video: ${videoWidth}x${videoHeight}",
+                        color = Color.Gray,
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
         
@@ -221,10 +299,10 @@ fun VideoDetectionScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
+                .background(Color.Black.copy(alpha = 0.9f))
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Detection count
             Text(
                 text = "Detected: ${detectionResults.size} objects",
                 color = Color.White,
@@ -232,44 +310,52 @@ fun VideoDetectionScreen(
                 fontWeight = FontWeight.Medium
             )
             
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             
-            // Detection categories
             if (detectionResults.isNotEmpty()) {
                 Text(
-                    text = detectionResults.joinToString(", ") { 
-                        "${it.category.label} (${String.format("%.1f", it.category.confidence * 100)}%)"
+                    text = detectionResults.take(5).joinToString(", ") { 
+                        "${it.category.label} (${String.format("%.0f", it.category.confidence * 100)}%)"
                     },
                     color = Color.Gray,
                     fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp)
                 )
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             
-            // Toggle detection button
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Button(
-                    onClick = { isDetecting = !isDetecting },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isDetecting) Color(0xFF007AFF) else Color(0xFF1C1C1E),
-                        contentColor = Color.White
-                    )
-                ) {
-                    Text(if (isDetecting) "Pause Detection" else "Resume Detection")
-                }
-                
-                Button(
-                    onClick = { navController?.navigateUp() },
+                    onClick = { 
+                        videoView?.let { 
+                            if (it.isPlaying) {
+                                it.pause()
+                                isPlaying = false
+                            } else {
+                                it.start()
+                                isPlaying = true
+                            }
+                        }
+                    },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFF1C1C1E),
                         contentColor = Color.White
                     )
                 ) {
-                    Text("Done")
+                    Text(if (isPlaying) "⏸ Pause" else "▶ Play")
+                }
+                
+                Button(
+                    onClick = { isDetecting = !isDetecting },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isDetecting) Color(0xFF34C759) else Color(0xFF1C1C1E),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(if (isDetecting) "● Detecting" else "○ Paused")
                 }
             }
         }
