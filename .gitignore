@@ -3,7 +3,7 @@
 /YOLO11Trainer/runs
 /YOLO11Trainer/Yolo-Weights
 .vscode/settings.json
-
+YOLO11Trainer/Comp-3001--4
 
 # Miscellaneous
 *.class
@@ -50,3 +50,4 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+

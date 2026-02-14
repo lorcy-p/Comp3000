@@ -1,22 +1,27 @@
+#from google.colab import files
 from ultralytics import YOLO
-import os
+#from google.colab import drive
+from roboflow import Roboflow
 
 
 def main():
-    # Can use a pre-trained model to retrain
-    model = YOLO('yolo11n.pt')
-    
-    # Move model to GPU for faster training
-    model.to('cuda')
 
-    # Fine-tune the model, will take a while
-    #model.tune(data="data.yaml", epochs=30, iterations=100, optimizer="AdamW",batch=32, imgsz=640)
-    
-    # Start training, will update hyperparameters later
-    results = model.train(data="data.yaml", epochs=80, imgsz=640,batch=32)
-    
-    
+  #replace when needed
+  rf = Roboflow(api_key="")
+  project = rf.workspace("lorcans-projects").project("comp-3001-inr2l")
+  dataset = project.version(4).download("yolov11")
+  yaml_path = "Comp-3001--4/data.yaml"
+
+
+  model = YOLO("last.pt")
+  model.to('cuda')
+
+  results = model.train(data=yaml_path, epochs=100, imgsz=736,batch=24,resume=True)
+
+  #results = model.tune(data="data.yaml", epochs=80, imgsz=320,batch=64)
+
+  #model.export(format='tflite',imgsz=736,int8=True,data=yaml_path)
 
 
 if __name__ == '__main__':
-    main()
+  main()
