@@ -23,15 +23,11 @@ class YoloDetector(
     private var ip: ImageProcessing
 
     init {
-
         yolo = TfliteDetector(context)
         yolo.setIouThreshold(iouThreshold)
         yolo.setConfidenceThreshold(confidenceThreshold)
 
-        //TODO change this model to the new, int8 quantized yolo11s model
-        // val modelPath = "YOLO11n-catsdogs_float32.tflite"
-        // val metadataPath = "metadata-catsdogs.yaml"
-        val modelPath = "yolo11n_float32.tflite"
+        val modelPath = "nano_best_quant.tflite"
         val metadataPath = "metadata.yaml"
 
         val config = LocalYoloModel(
@@ -41,14 +37,11 @@ class YoloDetector(
             metadataPath,
         )
 
-        val useGPU = currentDelegate == 0
-        yolo.loadModel(
-            config,
-            useGPU
-        )
+
+        val useGPU = currentDelegate == 1
+        yolo.loadModel(config, useGPU)
 
         ip = ImageProcessing()
-
     }
 
     override fun detect(image: TensorImage, imageRotation: Int): DetectionResult  {

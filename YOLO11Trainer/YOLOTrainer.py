@@ -7,7 +7,7 @@ from roboflow import Roboflow
 def main():
 
   #replace when needed
-  rf = Roboflow(api_key="")
+  rf = Roboflow(api_key="8Vgv7uh0nqdchSQLxMIo")
   project = rf.workspace("lorcans-projects").project("comp-3001-inr2l")
   dataset = project.version(4).download("yolov11")
   yaml_path = "Comp-3001--4/data.yaml"
@@ -16,7 +16,7 @@ def main():
   model = YOLO("last.pt")
   model.to('cuda')
 
-  results = model.train(data=yaml_path, epochs=100, imgsz=736,batch=24,resume=True)
+  results = model.train(data=yaml_path, epochs=50, imgsz=736,batch=16,resume=True)
 
   #results = model.tune(data="data.yaml", epochs=80, imgsz=320,batch=64)
 

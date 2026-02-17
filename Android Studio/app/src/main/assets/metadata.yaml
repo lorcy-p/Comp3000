@@ -8,13 +8,13 @@ stride: 32
 task: detect
 batch: 1
 imgsz:
-- 640
-- 640
+- 736
+- 736
 names:
   0: basketball
 
 args:
   batch: 1
-  half: false
+  half: true
   int8: false
   nms: false
