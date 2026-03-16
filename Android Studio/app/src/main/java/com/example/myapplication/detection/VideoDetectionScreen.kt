@@ -338,4 +338,3 @@ private fun findClosestFrame(frames: List<FrameDetection>, targetMs: Long): Fram
     return frames[low]
 }
 
-Sc
