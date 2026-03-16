@@ -36,11 +36,12 @@ import org.tensorflow.lite.examples.objectdetection.detectors.Category
 import org.tensorflow.lite.examples.objectdetection.detectors.ObjectDetection
 import java.io.File
 import java.io.FileOutputStream
+import com.example.myapplication.utils.ProcessingUI
 
 /**
  * Detection result for a single frame
  */
-private data class FrameDetection(
+data class FrameDetection(
     val timestampMs: Long,
     val detections: List<ObjectDetection>,
     val frameWidth: Int,
@@ -101,176 +102,42 @@ fun VideoDetectionScreen(
     var overlayView by remember { mutableStateOf<VideoOverlayView?>(null) }
 
 
+    val processor = remember { DetectionProcessor() }
+
     LaunchedEffect(videoUri) {
         try {
-            val startTime = System.currentTimeMillis()
+
             screenState = ScreenState.PROCESSING
-
-            processingStage = "Preparing video..."
-
-            // Copy video to cache
-            val cacheFile = withContext(Dispatchers.IO) {
-                copyVideoToCache(context, videoUri)
-            }
-
-            if (cacheFile == null) {
-                errorMessage = "Failed to access video file"
-                screenState = ScreenState.ERROR
-                return@LaunchedEffect
-            }
-            cachedVideoFile = cacheFile
-
-            processingStage = "Analyzing video..."
-
-            // Get video metadata
-            val retriever = MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(cacheFile.absolutePath)
-            } catch (e: Exception) {
-                errorMessage = "Failed to read video: ${e.message}"
-                screenState = ScreenState.ERROR
-                cacheFile.delete()
-                return@LaunchedEffect
-            }
-
-            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-            val frameRate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloatOrNull() ?: 30f
-
-            // Calculate frame interval (process every frame)
-            val frameIntervalMs = (1000f / frameRate).toLong().coerceAtLeast(33L)
-            totalFrames = (durationMs / frameIntervalMs).toInt()
-
-            if (totalFrames <= 0) {
-                errorMessage = "Could not determine video length"
-                screenState = ScreenState.ERROR
-                retriever.release()
-                cacheFile.delete()
-                return@LaunchedEffect
-            }
-
-            processingStage = "Loading detection model..."
-
-            // Initialize detector with synchronous result capture
-            val detectionResults = mutableListOf<FrameDetection>()
-            var lastDetections = listOf<ObjectDetection>()
-            var lastWidth = 0
-            var lastHeight = 0
-
-            val listener = object : ObjectDetectorHelper.DetectorListener {
-                override fun onError(error: String) {
-                    android.util.Log.e("PROCESSING", "Detector error: $error")
-                }
-
-                override fun onResults(
-                    results: List<ObjectDetection>,
-                    inferenceTimeMs: Long,
-                    imageHeight: Int,
-                    imageWidth: Int
-                ) {
-                    // Deep copy results
-                    lastDetections = results.map { det ->
-                        ObjectDetection(
-                            RectF(det.boundingBox),
-                            Category(det.category.label, det.category.confidence)
-                        )
-                    }
-                    lastWidth = imageWidth
-                    lastHeight = imageHeight
-                }
-            }
-
-            val detector = ObjectDetectorHelper(
-                threshold = 0.5f,
-                numThreads = 4,
-                maxResults = 5,
-                currentDelegate = ObjectDetectorHelper.DELEGATE_CPU,
-                currentModel = ObjectDetectorHelper.MODEL_YOLO,
-                context = context,
-                objectDetectorListener = listener
-            )
-
             processingStage = "Processing frames..."
 
-            // Process each frame
-            withContext(Dispatchers.Default) {
-                for (i in 0 until totalFrames) {
-                    if (!isProcessing) break
+            val result = processor.processVideo(
+                context,
+                videoUri
+            ) { progress, frame, total ->
 
-                    val timestampMs = i * frameIntervalMs
-                    val timestampUs = timestampMs * 1000L
-
-                    try {
-                        val bitmap = retriever.getFrameAtTime(
-                            timestampUs,
-                            MediaMetadataRetriever.OPTION_CLOSEST
-                        )
-
-                        if (bitmap != null) {
-                            lastDetections = emptyList()
-                            lastWidth = bitmap.width
-                            lastHeight = bitmap.height
-
-                            // Run detection
-                            detector.detect(bitmap, 0)
-
-                            // Store results
-                            detectionResults.add(
-                                FrameDetection(
-                                    timestampMs = timestampMs,
-                                    detections = lastDetections,
-                                    frameWidth = lastWidth,
-                                    frameHeight = lastHeight
-                                )
-                            )
-
-                            bitmap.recycle()
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.e("PROCESSING", "Frame $i error: ${e.message}")
-                    }
-
-                    // Update progress
-                    withContext(Dispatchers.Main) {
-                        currentFrame = i + 1
-                        processingProgress = (i + 1).toFloat() / totalFrames
-                    }
-                }
+                processingProgress = progress
+                currentFrame = frame
+                totalFrames = total
             }
 
-            retriever.release()
-            detector.clearObjectDetector()
+            frameDetections = result.frames
+            totalFrames = result.totalFrames
+            totalDetections = result.totalDetections
+            processingTimeMs = result.processingTimeMs
+            cachedVideoFile = result.cacheFile
 
-            if (!isProcessing) {
-                // Cancelled
-                cacheFile.delete()
-                navController?.navigateUp()
-                return@LaunchedEffect
+            exoPlayer = ExoPlayer.Builder(context).build().apply {
+                setMediaItem(MediaItem.fromUri(videoUri))
+                repeatMode = Player.REPEAT_MODE_ALL
+                prepare()
             }
 
-            // Store results
-            frameDetections = detectionResults
-            processingTimeMs = System.currentTimeMillis() - startTime
-            totalDetections = detectionResults.sumOf { it.detections.size }
-
-            processingStage = "Complete!"
-            delay(300)
-
-            // Create ExoPlayer for playback
-            withContext(Dispatchers.Main) {
-                exoPlayer = ExoPlayer.Builder(context).build().apply {
-                    setMediaItem(MediaItem.fromUri(videoUri))
-                    repeatMode = Player.REPEAT_MODE_ALL
-                    prepare()
-                }
-            }
-
-            // Switch to playback
             screenState = ScreenState.PLAYBACK
 
         } catch (e: Exception) {
-            errorMessage = "Error: ${e.message}"
+
+            errorMessage = e.message
             screenState = ScreenState.ERROR
-            android.util.Log.e("PROCESSING", "Processing error", e)
         }
     }
 
@@ -426,272 +293,9 @@ fun VideoDetectionScreen(
     }
 }
 
-// ==================== UI Components ====================
 
-@Composable
-private fun ProcessingUI(
-    progress: Float,
-    stage: String,
-    currentFrame: Int,
-    totalFrames: Int,
-    onCancel: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "Processing Video",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White
-        )
 
-        Spacer(modifier = Modifier.height(48.dp))
 
-        // Circular progress
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(120.dp)
-        ) {
-            CircularProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.fillMaxSize(),
-                color = Color(0xFF007AFF),
-                strokeWidth = 8.dp,
-                trackColor = Color(0xFF1C1C1E)
-            )
-
-            Text(
-                text = "${(progress * 100).toInt()}%",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Text(text = stage, fontSize = 16.sp, color = Color.Gray)
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (totalFrames > 0) {
-            Text(
-                text = "Frame $currentFrame / $totalFrames",
-                fontSize = 14.sp,
-                color = Color.Gray
-            )
-        }
-
-        Spacer(modifier = Modifier.height(48.dp))
-
-        LinearProgressIndicator(
-            progress = { progress },
-            modifier = Modifier.fillMaxWidth().height(8.dp),
-            color = Color(0xFF007AFF),
-            trackColor = Color(0xFF1C1C1E)
-        )
-
-        Spacer(modifier = Modifier.height(48.dp))
-
-        OutlinedButton(
-            onClick = onCancel,
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Cancel", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-@OptIn(UnstableApi::class)
-@Composable
-private fun PlaybackUI(
-    exoPlayer: ExoPlayer?,
-    overlayView: VideoOverlayView?,
-    onOverlayCreated: (VideoOverlayView) -> Unit,
-    isPlaying: Boolean,
-    currentPositionMs: Long,
-    currentDetectionCount: Int,
-    videoWidth: Int,
-    videoHeight: Int,
-    totalFrames: Int,
-    totalDetections: Int,
-    processingTimeMs: Long,
-    onPlayPause: () -> Unit,
-    onSeek: (Float) -> Unit,
-    onBack: () -> Unit
-) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Video + Overlay
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 100.dp, bottom = 200.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            AndroidView(
-                factory = { ctx ->
-                    FrameLayout(ctx).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-
-                        // PlayerView
-                        val player = PlayerView(ctx).apply {
-                            layoutParams = FrameLayout.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                            this.player = exoPlayer
-                            useController = false
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        }
-                        addView(player)
-
-                        // Overlay
-                        val overlay = VideoOverlayView(ctx, null).apply {
-                            layoutParams = FrameLayout.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        }
-                        addView(overlay)
-                        onOverlayCreated(overlay)
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        // Top bar
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.85f))
-                .padding(16.dp)
-                .align(Alignment.TopCenter)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
-                    onClick = onBack,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF1C1C1E),
-                        contentColor = Color.White
-                    )
-                ) {
-                    Text("← Back")
-                }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("Pre-processed", color = Color(0xFF34C759), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    if (videoWidth > 0) {
-                        Text("${videoWidth}x${videoHeight}", color = Color.Gray, fontSize = 12.sp)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Stats row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                StatItem("Frames", "$totalFrames")
-                StatItem("Time", "${processingTimeMs / 1000}s")
-                StatItem("Detections", "$totalDetections")
-            }
-        }
-
-        // Bottom controls
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .background(Color.Black.copy(alpha = 0.9f))
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "Detected: $currentDetectionCount basketball${if (currentDetectionCount != 1) "s" else ""}",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = formatTime(currentPositionMs),
-                color = Color.Gray,
-                fontSize = 14.sp
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Playback controls
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
-                    onClick = { exoPlayer?.seekTo(maxOf(0, (exoPlayer?.currentPosition ?: 0) - 5000)) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1C1C1E), contentColor = Color.White)
-                ) {
-                    Text("⏪ 5s")
-                }
-
-                Button(
-                    onClick = onPlayPause,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF007AFF), contentColor = Color.White),
-                    modifier = Modifier.size(64.dp)
-                ) {
-                    Text(if (isPlaying) "⏸" else "▶", fontSize = 20.sp)
-                }
-
-                Button(
-                    onClick = { exoPlayer?.seekTo(minOf(exoPlayer?.duration ?: 0, (exoPlayer?.currentPosition ?: 0) + 5000)) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1C1C1E), contentColor = Color.White)
-                ) {
-                    Text("5s ⏩")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Seek bar
-            Slider(
-                value = if ((exoPlayer?.duration ?: 0) > 0) currentPositionMs.toFloat() / (exoPlayer?.duration ?: 1) else 0f,
-                onValueChange = onSeek,
-                colors = SliderDefaults.colors(
-                    thumbColor = Color(0xFF007AFF),
-                    activeTrackColor = Color(0xFF007AFF),
-                    inactiveTrackColor = Color(0xFF1C1C1E)
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-    }
-}
-
-@Composable
-private fun StatItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Text(label, color = Color.Gray, fontSize = 12.sp)
-    }
-}
 
 // ==================== Helper Functions ====================
 
@@ -734,9 +338,4 @@ private fun findClosestFrame(frames: List<FrameDetection>, targetMs: Long): Fram
     return frames[low]
 }
 
-private fun formatTime(ms: Long): String {
-    val totalSeconds = ms / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return String.format("%02d:%02d", minutes, seconds)
-}
+Sc
