@@ -19,12 +19,11 @@ sealed class ProcessingState {
         val totalFrames: Int = 0,
         val stage: String = "Initializing..."
     ) : ProcessingState()
-    // Processing done, waiting for user to place hoop
     data class AwaitingHoopSelection(val result: DetectionResult) : ProcessingState()
-    // Hoop confirmed, ready for playback
     data class Complete(
         val result: DetectionResult,
-        val hoopPosition: Offset  // normalised 0..1
+        val hoopPosition: Offset,
+        val shots: List<ShotAttempt>  // segmented shots
     ) : ProcessingState()
     data class Error(val message: String) : ProcessingState()
 }
@@ -60,7 +59,6 @@ class VideoDetectionViewModel(application: Application) : AndroidViewModel(appli
                 } else {
                     throw Exception("Android 9 (API 28) or higher is required")
                 }
-                // Move to hoop selection instead of directly to Complete
                 _state.value = ProcessingState.AwaitingHoopSelection(result)
             } catch (e: Exception) {
                 _state.value = ProcessingState.Error(e.message ?: "Unknown error")
@@ -70,9 +68,18 @@ class VideoDetectionViewModel(application: Application) : AndroidViewModel(appli
 
     fun confirmHoopPosition(normalisedX: Float, normalisedY: Float) {
         val current = _state.value as? ProcessingState.AwaitingHoopSelection ?: return
+        val hoopPosition = Offset(normalisedX, normalisedY)
+
+        // Run segmentation immediately after hoop is confirmed
+        val shots = ShotSegmenter.segment(
+            frames = current.result.frames,
+            hoopPosition = hoopPosition
+        )
+
         _state.value = ProcessingState.Complete(
             result = current.result,
-            hoopPosition = Offset(normalisedX, normalisedY)
+            hoopPosition = hoopPosition,
+            shots = shots
         )
     }
 

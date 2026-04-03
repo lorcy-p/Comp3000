@@ -185,6 +185,9 @@ fun VideoDetectionScreen(
                     totalFrames = state.result.totalFrames,
                     totalDetections = state.result.totalDetections,
                     processingTimeMs = state.result.processingTimeMs,
+                    shotCount = state.shots.size,
+                    shots = state.shots,            // new
+                    hoopPosition = state.hoopPosition,
                     onPlayPause = {
                         val player = exoPlayer ?: return@PlaybackUI
                         if (player.isPlaying) { player.pause(); isPlaying = false }
@@ -193,7 +196,7 @@ fun VideoDetectionScreen(
                     onSeek = { fraction ->
                         exoPlayer?.let { it.seekTo((fraction * it.duration).toLong()) }
                     },
-                    onBack = { viewModel.backToHoopSelection() }  // back goes to hoop selection, not nav up
+                    onBack = { viewModel.backToHoopSelection() }
                 )
             }
 
