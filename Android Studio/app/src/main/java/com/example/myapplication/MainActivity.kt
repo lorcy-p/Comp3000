@@ -13,10 +13,18 @@ import com.example.myapplication.ui.theme.MyApplicationTheme
 import com.example.app.ui.home.HomeScreen
 import com.example.app.ui.processing.VideoProcessingScreen
 import com.example.myapplication.detection.VideoDetectionScreen
+import org.opencv.android.OpenCVLoader
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        if (!OpenCVLoader.initLocal()) {
+            android.util.Log.e("OPENCV", "OpenCV failed to initialise")
+        } else {
+            android.util.Log.d("OPENCV", "OpenCV initialised successfully")
+        }
+
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {

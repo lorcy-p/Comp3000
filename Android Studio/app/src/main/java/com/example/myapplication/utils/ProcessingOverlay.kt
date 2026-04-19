@@ -16,6 +16,7 @@ fun ProcessingUI(
     stage: String,
     currentFrame: Int,
     totalFrames: Int,
+    samplingRate: String = "",
     onCancel: () -> Unit
 ) {
     Column(
@@ -66,26 +67,29 @@ fun ProcessingUI(
                 color = Color.Gray
             )
         }
-
-        Spacer(modifier = Modifier.height(48.dp))
-
-        LinearProgressIndicator(
-            progress = { progress },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp),
-            color = Color(0xFF007AFF),
-            trackColor = Color(0xFF1C1C1E)
-        )
-
-        Spacer(modifier = Modifier.height(48.dp))
-
-        OutlinedButton(
-            onClick = onCancel,
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Cancel", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        
+        if (samplingRate.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Sampling: ",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+                Text(
+                    text = samplingRate,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = when (samplingRate) {
+                        "High" -> Color(0xFF34C759)
+                        "Mid" -> Color(0xFFFF9500)
+                        else -> Color(0xFF8E8E93)
+                    }
+                )
+            }
         }
     }
 }

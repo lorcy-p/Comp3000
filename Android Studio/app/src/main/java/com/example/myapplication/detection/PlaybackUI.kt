@@ -63,54 +63,33 @@ fun PlaybackUI(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // ── Top bar ──────────────────────────────────────────────
-        Column(
+        // ── Top bar ──────────────────────────────────────────────────────────────────
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Color.Black.copy(alpha = 0.95f))
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Button(
+                onClick = onBack,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1C1C1E),
+                    contentColor = Color.White
+                )
             ) {
-                Button(
-                    onClick = onBack,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF1C1C1E),
-                        contentColor = Color.White
-                    )
-                ) {
-                    Text("← Back")
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        "Pre-processed",
-                        color = Color(0xFF34C759),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    if (videoWidth > 0) {
-                        Text("${videoWidth}x${videoHeight}", color = Color.Gray, fontSize = 12.sp)
-                    }
-                }
+                Text("← Back")
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                StatItem("Frames", "$totalFrames")
-                StatItem("Time", "${processingTimeMs / 1000}s")
-                StatItem("Detections", "$totalDetections")
-                StatItem("Shots", "$shotCount")
-            }
+            Text(
+                text = "Pre-processed",
+                color = Color(0xFF34C759),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
+            )
         }
-
-        // ── Video ────────────────────────────────────────────────
+        // ── Video ────────────────────────────────────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -153,6 +132,15 @@ fun PlaybackUI(
                 modifier = Modifier.fillMaxSize()
             )
 
+            // Shot arc drawn on top of the video
+            ShotArcOverlay(
+                shot = shots.getOrNull(activeShotIndex),
+                hoopPosition = hoopPosition,
+                videoWidth = videoWidth,
+                videoHeight = videoHeight,
+                modifier = Modifier.fillMaxSize()
+            )
+
             // Active shot badge
             if (activeShotIndex >= 0) {
                 Box(
@@ -163,7 +151,10 @@ fun PlaybackUI(
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "Shot ${activeShotIndex + 1}",
+                        text = "Shot ${activeShotIndex + 1}  •  ${
+                            shots.getOrNull(activeShotIndex)?.curve?.entryAngleDeg
+                                ?.let { "%.1f°".format(kotlin.math.abs(it)) } ?: "N/A"
+                        }",
                         color = Color.White,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
@@ -321,13 +312,21 @@ private fun ShotCard(
     isActive: Boolean,
     onClick: () -> Unit
 ) {
-    val durationMs = shot.endTimestampMs - shot.startTimestampMs
     val borderColor = if (isActive) Color(0xFFFF9500) else Color(0xFF2C2C2E)
     val bgColor = if (isActive) Color(0xFF2A1F00) else Color(0xFF1C1C1E)
 
+    val angleText = shot.curve?.entryAngleDeg
+        ?.let { "%.1f°".format(kotlin.math.abs(it)) } ?: "N/A"
+
+    val (qualityLabel, qualityColor) = if (shot.curve != null) {
+        QuadraticFitter.angleQuality(shot.curve.entryAngleDeg)
+    } else {
+        "N/A" to Color.Gray
+    }
+
     Column(
         modifier = Modifier
-            .width(100.dp)
+            .width(90.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(bgColor)
             .border(
@@ -338,45 +337,40 @@ private fun ShotCard(
             .clickable { onClick() }
             .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         // Shot number
         Text(
-            text = "Shot",
-            color = Color.Gray,
-            fontSize = 11.sp
-        )
-        Text(
             text = "${index + 1}",
             color = if (isActive) Color(0xFFFF9500) else Color.White,
-            fontSize = 26.sp,
+            fontSize = 22.sp,
             fontWeight = FontWeight.Bold
         )
 
         HorizontalDivider(color = Color(0xFF2C2C2E), thickness = 0.5.dp)
 
-        // Start time
+        // Entry angle
         Text(
-            text = formatTime(shot.startTimestampMs),
+            text = angleText,
             color = Color.White,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center
         )
 
-        // Duration + frame count
-        Text(
-            text = "${durationMs / 1000.0}s",
-            color = Color.Gray,
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = "${shot.positions.size} pts",
-            color = Color.Gray,
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center
-        )
+        // Quality label
+        Box(
+            modifier = Modifier
+                .background(qualityColor.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+        ) {
+            Text(
+                text = qualityLabel,
+                color = qualityColor,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
     }
 }
 

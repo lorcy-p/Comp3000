@@ -35,12 +35,28 @@ class DetectionProcessor {
         retriever.setDataSource(cacheFile.absolutePath)
 
         val durationMs =
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-                ?: 0L
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
 
         val frameRate =
             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
                 ?.toFloatOrNull() ?: 30f
+
+        val videoW = retriever.extractMetadata(
+            MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+        )?.toIntOrNull() ?: 1280
+
+        val videoH = retriever.extractMetadata(
+            MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+        )?.toIntOrNull() ?: 720
+
+        val imgsz = 736
+        val scale = imgsz.toFloat() / maxOf(videoW, videoH)
+        val targetWidth  = (videoW * scale).toInt()
+        val targetHeight = (videoH * scale).toInt()
+
+        android.util.Log.d("TIMING",
+            "Video: ${videoW}x${videoH} → Target: ${targetWidth}x${targetHeight}")
 
         val frameIntervalMs = (1000f / frameRate).toLong().coerceAtLeast(33L)
         val totalFrames = (durationMs / frameIntervalMs).toInt()
@@ -50,20 +66,19 @@ class DetectionProcessor {
             throw Exception("Could not determine video length")
         }
 
-        val frameSkip = 3
+        val frameSkip = 4
         val framesToProcess = (0 until totalFrames step frameSkip).toList()
         val processCount = framesToProcess.size
 
         val detectionResults = mutableListOf<FrameDetection>()
-
         var lastDetections = listOf<ObjectDetection>()
         var lastWidth = 0
         var lastHeight = 0
 
         val listener = object : ObjectDetectorHelper.DetectorListener {
-
-            override fun onError(error: String) {}
-
+            override fun onError(error: String) {
+                android.util.Log.e("TIMING", "Detector error: $error")
+            }
             override fun onResults(
                 results: List<ObjectDetection>,
                 inferenceTimeMs: Long,
@@ -82,78 +97,114 @@ class DetectionProcessor {
         }
 
         val detector = ObjectDetectorHelper(
-            threshold = 0.5f,
-            numThreads = 4,
-            maxResults = 5,
+            threshold = 0.4f,
+            numThreads = 6,
+            maxResults = 1,
             currentDelegate = ObjectDetectorHelper.DELEGATE_GPU,
             currentModel = ObjectDetectorHelper.MODEL_YOLO,
             context = context,
             objectDetectorListener = listener
         )
 
-        // Channel buffers up to 8 bitmaps between producer and consumer
-        val channel = Channel<Pair<Long, Bitmap>>(capacity = 8)
+        val channel = Channel<Pair<Long, Bitmap>>(capacity = 16)
 
-        // frame retrieval on IO thread using index-based access
+        // Producer
         val producerJob = launch(Dispatchers.IO) {
-            framesToProcess.forEachIndexed { idx, frameIndex ->
+            var totalRetrievalMs = 0L
+            var totalScaleMs = 0L
+            var framesRetrieved = 0
+
+            for (frameIndex in framesToProcess) {
                 try {
+                    val retrievalStart = System.currentTimeMillis()
+                    val raw = retriever.getFrameAtIndex(frameIndex)
+                    val retrievalMs = System.currentTimeMillis() - retrievalStart
+                    totalRetrievalMs += retrievalMs
 
-                    val bitmap = retriever.getFrameAtIndex(frameIndex)
-
-                    if (bitmap != null) {
+                    if (raw != null) {
+                        val scaleStart = System.currentTimeMillis()
                         val timestampMs = frameIndex * frameIntervalMs
+                        val scaled = Bitmap.createScaledBitmap(raw, targetWidth, targetHeight, false)
+                        raw.recycle()
+                        val scaleMs = System.currentTimeMillis() - scaleStart
+                        totalScaleMs += scaleMs
+                        framesRetrieved++
 
-                        // Downscale before sending to reduce inference time
-                        val scaledBitmap = Bitmap.createScaledBitmap(
-                            bitmap,
-                            bitmap.width / 2,
-                            bitmap.height / 2,
-                            true
-                        )
-                        bitmap.recycle()
+                        android.util.Log.d("TIMING",
+                            "Frame $frameIndex: retrieval=${retrievalMs}ms scale=${scaleMs}ms")
 
-                        channel.send(Pair(timestampMs, scaledBitmap))
+                        channel.send(Pair(timestampMs, scaled))
                     }
-                } catch (_: Exception) {}
-
-                // Progress based on retrieval
-                onProgress((idx + 1).toFloat() / processCount, idx + 1, processCount)
+                } catch (e: Exception) {
+                    android.util.Log.e("TIMING", "Frame $frameIndex error: ${e.message}")
+                }
             }
+
+            android.util.Log.d("TIMING", "=== RETRIEVAL SUMMARY ===")
+            android.util.Log.d("TIMING", "Total frames retrieved: $framesRetrieved")
+            android.util.Log.d("TIMING", "Total retrieval time: ${totalRetrievalMs}ms")
+            android.util.Log.d("TIMING", "Total scale time: ${totalScaleMs}ms")
+            android.util.Log.d("TIMING",
+                "Avg retrieval per frame: ${if (framesRetrieved > 0) totalRetrievalMs / framesRetrieved else 0}ms")
+
             channel.close()
         }
 
+        // Consumer
+        var processedCount = 0
+        var totalInferenceMs = 0L
+
         for ((timestampMs, bitmap) in channel) {
             lastDetections = emptyList()
-            lastWidth = bitmap.width
+            lastWidth  = bitmap.width
             lastHeight = bitmap.height
 
+            val inferenceStart = System.currentTimeMillis()
             detector.detect(bitmap, 0)
+            val inferenceMs = System.currentTimeMillis() - inferenceStart
+            totalInferenceMs += inferenceMs
+
+            android.util.Log.d("TIMING",
+                "Frame $processedCount: inference=${inferenceMs}ms " +
+                        "detections=${lastDetections.size}")
 
             detectionResults.add(
                 FrameDetection(
-                    timestampMs,
-                    lastDetections,
-                    lastWidth,
-                    lastHeight
+                    timestampMs = timestampMs,
+                    detections  = lastDetections,
+                    frameWidth  = lastWidth,
+                    frameHeight = lastHeight
                 )
             )
-
             bitmap.recycle()
+
+            processedCount++
+            onProgress(
+                processedCount.toFloat() / processCount,
+                processedCount,
+                processCount
+            )
         }
 
-        // Wait for producer to finish before continuing
         producerJob.join()
-
         retriever.release()
         detector.clearObjectDetector()
 
+        val totalMs = System.currentTimeMillis() - startTime
+        android.util.Log.d("TIMING", "=== FINAL SUMMARY ===")
+        android.util.Log.d("TIMING", "Total frames processed: $processedCount")
+        android.util.Log.d("TIMING", "Total processing time: ${totalMs}ms")
+        android.util.Log.d("TIMING", "Total inference time: ${totalInferenceMs}ms")
+        android.util.Log.d("TIMING",
+            "Avg inference per frame: ${if (processedCount > 0) totalInferenceMs / processedCount else 0}ms")
+        android.util.Log.d("TIMING", "Overhead (retrieval+other): ${totalMs - totalInferenceMs}ms")
+
         DetectionResult(
-            frames = detectionResults,
-            totalFrames = totalFrames,
-            totalDetections = detectionResults.sumOf { it.detections.size },
-            processingTimeMs = System.currentTimeMillis() - startTime,
-            cacheFile = cacheFile
+            frames           = detectionResults,
+            totalFrames      = totalFrames,
+            totalDetections  = detectionResults.sumOf { it.detections.size },
+            processingTimeMs = totalMs,
+            cacheFile        = cacheFile
         )
     }
 
@@ -161,15 +212,12 @@ class DetectionProcessor {
         return try {
             val cacheFile =
                 File(context.cacheDir, "detection_video_${System.currentTimeMillis()}.mp4")
-
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(cacheFile).use { output ->
                     input.copyTo(output, 8192)
                 }
             }
-
             if (cacheFile.exists() && cacheFile.length() > 0) cacheFile else null
-
         } catch (e: Exception) {
             null
         }

@@ -101,5 +101,8 @@ dependencies {
 
     implementation("org.yaml:snakeyaml:2.2")
 
+    implementation("org.apache.commons:commons-math3:3.6.1")
 
+    implementation("org.opencv:opencv:4.9.0")
 }
+

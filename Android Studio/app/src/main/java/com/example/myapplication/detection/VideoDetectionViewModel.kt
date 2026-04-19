@@ -17,13 +17,14 @@ sealed class ProcessingState {
         val progress: Float = 0f,
         val currentFrame: Int = 0,
         val totalFrames: Int = 0,
-        val stage: String = "Initializing..."
+        val stage: String = "Initializing...",
+        val samplingRate: String = ""
     ) : ProcessingState()
     data class AwaitingHoopSelection(val result: DetectionResult) : ProcessingState()
     data class Complete(
         val result: DetectionResult,
         val hoopPosition: Offset,
-        val shots: List<ShotAttempt>  // segmented shots
+        val shots: List<ShotAttempt>
     ) : ProcessingState()
     data class Error(val message: String) : ProcessingState()
 }
@@ -59,7 +60,9 @@ class VideoDetectionViewModel(application: Application) : AndroidViewModel(appli
                 } else {
                     throw Exception("Android 9 (API 28) or higher is required")
                 }
+
                 _state.value = ProcessingState.AwaitingHoopSelection(result)
+
             } catch (e: Exception) {
                 _state.value = ProcessingState.Error(e.message ?: "Unknown error")
             }
@@ -70,16 +73,24 @@ class VideoDetectionViewModel(application: Application) : AndroidViewModel(appli
         val current = _state.value as? ProcessingState.AwaitingHoopSelection ?: return
         val hoopPosition = Offset(normalisedX, normalisedY)
 
-        // Run segmentation immediately after hoop is confirmed
-        val shots = ShotSegmenter.segment(
+        val rawShots = ShotSegmenter.segment(
             frames = current.result.frames,
             hoopPosition = hoopPosition
         )
 
+        val fittedShots = rawShots.map { shot ->
+            shot.copy(
+                curve = QuadraticFitter.fit(
+                    positions = shot.positions,
+                    hoopPosition = hoopPosition
+                )
+            )
+        }
+
         _state.value = ProcessingState.Complete(
             result = current.result,
             hoopPosition = hoopPosition,
-            shots = shots
+            shots = fittedShots
         )
     }
 

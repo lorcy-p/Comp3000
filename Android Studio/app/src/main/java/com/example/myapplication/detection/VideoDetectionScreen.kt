@@ -155,6 +155,7 @@ fun VideoDetectionScreen(
                     stage = state.stage,
                     currentFrame = state.currentFrame,
                     totalFrames = state.totalFrames,
+                    samplingRate = state.samplingRate,
                     onCancel = { navController?.navigateUp() }
                 )
             }

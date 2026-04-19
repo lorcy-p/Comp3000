@@ -3,7 +3,6 @@ package com.example.myapplication.detection
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -19,6 +18,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.min
 
 @Composable
 fun HoopSelectionScreen(
@@ -35,11 +36,11 @@ fun HoopSelectionScreen(
     onBack: () -> Unit
 ) {
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var hoopPosition by remember { mutableStateOf<Offset?>(null) }
-    var imageSize by remember { mutableStateOf(IntSize.Zero) }
-    var isLoading by remember { mutableStateOf(true) }
+    var hoopPosition  by remember { mutableStateOf<Offset?>(null) }   // canvas pixels
+    var normHoopPos   by remember { mutableStateOf<Pair<Float, Float>?>(null) } // 0..1
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    var isLoading     by remember { mutableStateOf(true) }
 
-    // Extract a frame at 20% into the video for a representative court view
     LaunchedEffect(cacheFilePath) {
         val frame = withContext(Dispatchers.IO) {
             try {
@@ -52,9 +53,7 @@ fun HoopSelectionScreen(
                 )
                 retriever.release()
                 bitmap
-            } catch (e: Exception) {
-                null
-            }
+            } catch (e: Exception) { null }
         }
         previewBitmap = frame
         isLoading = false
@@ -77,6 +76,8 @@ fun HoopSelectionScreen(
                 modifier = Modifier.align(Alignment.Center)
             )
         } else {
+            val bitmap = previewBitmap!!
+
             Column(modifier = Modifier.fillMaxSize()) {
 
                 // Header
@@ -102,69 +103,101 @@ fun HoopSelectionScreen(
                     )
                 }
 
-                // Video frame with tap overlay
+                // ── Image + tap area ─────────────────────────────────────────
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(1f)
+                        .background(Color.Black)
+                        .onGloballyPositioned { coords ->
+                            containerSize = coords.size
+                        }
+                        .pointerInput(bitmap) {
+                            detectTapGestures { tapOffset ->
+                                if (containerSize == IntSize.Zero) return@detectTapGestures
+
+                                val cW = containerSize.width.toFloat()
+                                val cH = containerSize.height.toFloat()
+                                val bW = bitmap.width.toFloat()
+                                val bH = bitmap.height.toFloat()
+
+                                // Calculate the actual image rect within the container
+                                // (ContentScale.Fit letterboxing)
+                                val imageRect = calculateFitRect(cW, cH, bW, bH)
+
+                                // Clamp tap to within the image rect
+                                val clampedX = tapOffset.x
+                                    .coerceIn(imageRect.left, imageRect.right)
+                                val clampedY = tapOffset.y
+                                    .coerceIn(imageRect.top, imageRect.bottom)
+
+                                // Normalise relative to the image rect, not the container
+                                val normX = ((clampedX - imageRect.left) / imageRect.width)
+                                    .coerceIn(0f, 1f)
+                                val normY = ((clampedY - imageRect.top) / imageRect.height)
+                                    .coerceIn(0f, 1f)
+
+                                normHoopPos = Pair(normX, normY)
+
+                                // Store canvas position for crosshair drawing
+                                hoopPosition = Offset(clampedX, clampedY)
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    // Frame image
-                    Image(
-                        bitmap = previewBitmap!!.asImageBitmap(),
-                        contentDescription = "Video frame",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .onGloballyPositioned { coords ->
-                                imageSize = coords.size
-                            }
-                            .pointerInput(Unit) {
-                                detectTapGestures { tapOffset ->
-                                    // Store raw pixel position within the composable
-                                    hoopPosition = tapOffset
-                                }
-                            }
-                    )
+                    // Draw bitmap manually so we control exact placement
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val cW = size.width
+                        val cH = size.height
+                        val bW = bitmap.width.toFloat()
+                        val bH = bitmap.height.toFloat()
 
-                    // Draw crosshair at tapped position
-                    if (hoopPosition != null) {
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            val pos = hoopPosition!!
+                        val rect = calculateFitRect(cW, cH, bW, bH)
 
-                            // Outer ring
+                        drawImage(
+                            image = bitmap.asImageBitmap(),
+                            dstOffset = androidx.compose.ui.unit.IntOffset(
+                                rect.left.toInt(),
+                                rect.top.toInt()
+                            ),
+                            dstSize = androidx.compose.ui.unit.IntSize(
+                                rect.width.toInt(),
+                                rect.height.toInt()
+                            )
+                        )
+
+                        // Crosshair at tapped position
+                        val pos = hoopPosition
+                        if (pos != null) {
+                            val lineLength = 20f
+
                             drawCircle(
                                 color = Color(0xFFFF9500),
                                 radius = 28f,
                                 center = pos,
                                 style = Stroke(width = 3f)
                             )
-
-                            // Inner dot
                             drawCircle(
                                 color = Color(0xFFFF9500),
                                 radius = 6f,
                                 center = pos
                             )
-
-                            // Crosshair lines
-                            val lineLength = 20f
                             drawLine(
                                 color = Color(0xFFFF9500),
                                 start = Offset(pos.x - lineLength, pos.y),
-                                end = Offset(pos.x + lineLength, pos.y),
+                                end   = Offset(pos.x + lineLength, pos.y),
                                 strokeWidth = 2f
                             )
                             drawLine(
                                 color = Color(0xFFFF9500),
                                 start = Offset(pos.x, pos.y - lineLength),
-                                end = Offset(pos.x, pos.y + lineLength),
+                                end   = Offset(pos.x, pos.y + lineLength),
                                 strokeWidth = 2f
                             )
                         }
                     }
 
-                    // Hint if nothing tapped yet
+                    // Tap hint
                     if (hoopPosition == null) {
                         Box(
                             modifier = Modifier
@@ -185,7 +218,7 @@ fun HoopSelectionScreen(
                     }
                 }
 
-                // Bottom controls
+                // ── Bottom controls ──────────────────────────────────────────
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -193,7 +226,7 @@ fun HoopSelectionScreen(
                         .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    if (hoopPosition != null && imageSize != IntSize.Zero) {
+                    if (hoopPosition != null) {
                         Text(
                             text = "Hoop marked ✓  —  tap again to adjust",
                             color = Color(0xFFFF9500),
@@ -219,16 +252,10 @@ fun HoopSelectionScreen(
 
                         Button(
                             onClick = {
-                                val pos = hoopPosition ?: return@Button
-                                val size = imageSize
-
-                                // Normalise to 0..1 relative to the displayed image area
-                                val normX = (pos.x / size.width).coerceIn(0f, 1f)
-                                val normY = (pos.y / size.height).coerceIn(0f, 1f)
-
+                                val (normX, normY) = normHoopPos ?: return@Button
                                 onHoopConfirmed(normX, normY)
                             },
-                            enabled = hoopPosition != null,
+                            enabled = normHoopPos != null,
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = Color(0xFFFF9500),
@@ -244,4 +271,32 @@ fun HoopSelectionScreen(
             }
         }
     }
+}
+
+/**
+ * Calculates the rect an image occupies inside a container when using
+ * ContentScale.Fit (maintains aspect ratio, no cropping).
+ */
+private data class FitRect(
+    val left: Float,
+    val top: Float,
+    val width: Float,
+    val height: Float
+) {
+    val right  get() = left + width
+    val bottom get() = top + height
+}
+
+private fun calculateFitRect(
+    containerW: Float,
+    containerH: Float,
+    imageW: Float,
+    imageH: Float
+): FitRect {
+    val scale = min(containerW / imageW, containerH / imageH)
+    val dispW = imageW * scale
+    val dispH = imageH * scale
+    val left  = (containerW - dispW) / 2f
+    val top   = (containerH - dispH) / 2f
+    return FitRect(left, top, dispW, dispH)
 }

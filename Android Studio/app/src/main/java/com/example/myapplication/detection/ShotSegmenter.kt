@@ -4,106 +4,189 @@ import androidx.compose.ui.geometry.Offset
 
 data class BallPosition(
     val timestampMs: Long,
-    val normX: Float,   // 0..1 relative to frame width
-    val normY: Float    // 0..1 relative to frame height
+    val normX: Float,
+    val normY: Float
 )
 
 data class ShotAttempt(
     val positions: List<BallPosition>,
     val startTimestampMs: Long,
-    val endTimestampMs: Long
+    val endTimestampMs: Long,
+    val curve: QuadraticCurve? = null
 )
 
 object ShotSegmenter {
 
-    // Minimum number of frames to count as a real shot, filters out noise
-    private const val MIN_SHOT_FRAMES = 5
+    private const val MIN_RISE_ABOVE_HOOP = 0.08f
+    private const val MIN_RISING_FRAMES   = 3
+    private const val MIN_TOTAL_FRAMES    = 6
+    private const val SMOOTH_WINDOW       = 3
+
+    private enum class Phase { IDLE, RISING, FALLING }
 
     fun segment(
         frames: List<FrameDetection>,
-        hoopPosition: Offset  // normalised 0..1
+        hoopPosition: Offset
     ): List<ShotAttempt> {
 
-        val hoopIsInBottomHalf = hoopPosition.y > 0.5f
-
-        // Extract normalised ball centre positions from detections
         val ballPositions = extractBallPositions(frames)
+        if (ballPositions.size < MIN_TOTAL_FRAMES) return emptyList()
 
-        if (ballPositions.isEmpty()) return emptyList()
+        val smoothed = smoothPositions(ballPositions)
+        val shots    = mutableListOf<ShotAttempt>()
 
-        val shots = mutableListOf<ShotAttempt>()
-        var currentShot = mutableListOf<BallPosition>()
-        var inShot = false
+        var phase        = Phase.IDLE
+        var shotStart    = 0
+        var apexY        = 1f
+        var risingFrames = 0
 
-        for (pos in ballPositions) {
-            val ballInOppositeHalf = if (hoopIsInBottomHalf) {
-                pos.normY < 0.5f   // hoop bottom, ball in top half = shot territory
-            } else {
-                pos.normY > 0.5f   // hoop top, ball in bottom half = shot territory
-            }
+        for (i in 1 until smoothed.size) {
+            val prev = smoothed[i - 1]
+            val curr = smoothed[i]
 
-            when {
-                // Ball has moved into opposite half — start or continue a shot
-                ballInOppositeHalf -> {
-                    inShot = true
-                    currentShot.add(pos)
-                }
+            val movingUp   = curr.normY < prev.normY
+            val movingDown = curr.normY > prev.normY
 
-                // Ball has returned to hoop's half — end of this shot attempt
-                inShot && !ballInOppositeHalf -> {
-                    if (currentShot.size >= MIN_SHOT_FRAMES) {
-                        shots.add(
-                            ShotAttempt(
-                                positions = currentShot.toList(),
-                                startTimestampMs = currentShot.first().timestampMs,
-                                endTimestampMs = currentShot.last().timestampMs
-                            )
-                        )
+            when (phase) {
+
+                Phase.IDLE -> {
+                    if (movingUp && curr.normY <= hoopPosition.y + 0.15f) {
+                        phase        = Phase.RISING
+                        shotStart    = i - 1
+                        apexY        = curr.normY
+                        risingFrames = 1
                     }
-                    currentShot = mutableListOf()
-                    inShot = false
+                }
+
+                Phase.RISING -> {
+                    when {
+                        movingUp -> {
+                            apexY = minOf(apexY, curr.normY)
+                            risingFrames++
+                        }
+                        movingDown -> {
+                            val roseAboveHoop = apexY < (hoopPosition.y - MIN_RISE_ABOVE_HOOP)
+                            if (roseAboveHoop && risingFrames >= MIN_RISING_FRAMES) {
+                                phase = Phase.FALLING
+                            } else {
+                                android.util.Log.d("SEGMENTER",
+                                    "Discarded rising: apexY=$apexY hoopY=${hoopPosition.y} frames=$risingFrames")
+                                phase = Phase.IDLE
+                            }
+                        }
+                    }
+                }
+
+                Phase.FALLING -> {
+                    val ballBelowHoop = curr.normY > hoopPosition.y + 0.05f
+                    val isLast        = i == smoothed.size - 1
+
+                    if (ballBelowHoop || isLast) {
+                        // End shot — clip to above-hoop only before saving
+                        val rawWindow = ballPositions.filter { pos ->
+                            pos.timestampMs >= smoothed[shotStart].timestampMs &&
+                                    pos.timestampMs <= curr.timestampMs
+                        }
+                        saveIfValid(rawWindow, hoopPosition, shots)
+                        phase = Phase.IDLE
+
+                    } else if (movingUp) {
+                        // Possible rim bounce — end current shot
+                        val rawWindow = ballPositions.filter { pos ->
+                            pos.timestampMs >= smoothed[shotStart].timestampMs &&
+                                    pos.timestampMs <= prev.timestampMs
+                        }
+                        saveIfValid(rawWindow, hoopPosition, shots)
+                        phase = Phase.IDLE
+                    }
                 }
             }
         }
 
-        // Capture any shot still in progress at end of video
-        if (inShot && currentShot.size >= MIN_SHOT_FRAMES) {
-            shots.add(
-                ShotAttempt(
-                    positions = currentShot.toList(),
-                    startTimestampMs = currentShot.first().timestampMs,
-                    endTimestampMs = currentShot.last().timestampMs
-                )
-            )
+        android.util.Log.d("SEGMENTER", "Total shots: ${shots.size}")
+        return shots
+    }
+
+    /**
+     * Validates a candidate shot window and adds it to the list if it passes.
+     * Filters to only above-hoop positions and checks ball is moving TOWARD
+     * the hoop horizontally (not away from it).
+     */
+    private fun saveIfValid(
+        rawPositions: List<BallPosition>,
+        hoopPosition: Offset,
+        shots: MutableList<ShotAttempt>
+    ) {
+        if (rawPositions.size < MIN_TOTAL_FRAMES) return
+
+        // ── Filter 1: only keep positions above the hoop ─────────────────────
+        val aboveHoop = rawPositions.filter { it.normY < hoopPosition.y }
+
+        android.util.Log.d("SEGMENTER",
+            "saveIfValid: ${rawPositions.size} raw → ${aboveHoop.size} above hoop")
+
+        if (aboveHoop.size < MIN_TOTAL_FRAMES) return
+
+        // ── Filter 2: ball must be moving TOWARD hoop horizontally ───────────
+        // Compare the average X of the first third of positions vs the last third.
+        // If the ball is moving away from the hoop X, discard.
+        val third      = (aboveHoop.size / 3).coerceAtLeast(1)
+        val earlyAvgX  = aboveHoop.take(third).map { it.normX }.average().toFloat()
+        val lateAvgX   = aboveHoop.takeLast(third).map { it.normX }.average().toFloat()
+        val hoopX      = hoopPosition.x
+
+        // Distance from hoop X at start vs end — end should be closer
+        val earlyDist  = kotlin.math.abs(earlyAvgX - hoopX)
+        val lateDist   = kotlin.math.abs(lateAvgX  - hoopX)
+
+        val movingTowardHoop = lateDist < earlyDist
+
+        android.util.Log.d("SEGMENTER",
+            "earlyX=$earlyAvgX lateX=$lateAvgX hoopX=$hoopX " +
+                    "earlyDist=$earlyDist lateDist=$lateDist toward=$movingTowardHoop")
+
+        if (!movingTowardHoop) {
+            android.util.Log.d("SEGMENTER", "Discarded: moving away from hoop")
+            return
         }
 
-        return shots
+        shots.add(
+            ShotAttempt(
+                positions        = aboveHoop,
+                startTimestampMs = aboveHoop.first().timestampMs,
+                endTimestampMs   = aboveHoop.last().timestampMs
+            )
+        )
+
+        android.util.Log.d("SEGMENTER", "Shot saved with ${aboveHoop.size} points")
+    }
+
+    private fun smoothPositions(positions: List<BallPosition>): List<BallPosition> {
+        if (positions.size <= SMOOTH_WINDOW) return positions
+        return positions.mapIndexed { i, pos ->
+            val windowStart = maxOf(0, i - SMOOTH_WINDOW / 2)
+            val windowEnd   = minOf(positions.size - 1, i + SMOOTH_WINDOW / 2)
+            val window      = positions.subList(windowStart, windowEnd + 1)
+            pos.copy(normY  = window.map { it.normY }.average().toFloat())
+        }
     }
 
     private fun extractBallPositions(frames: List<FrameDetection>): List<BallPosition> {
         val positions = mutableListOf<BallPosition>()
-
         for (frame in frames) {
             if (frame.detections.isEmpty()) continue
-
-            // If multiple detections, use the most confident one
             val best = frame.detections.maxByOrNull { it.category.confidence } ?: continue
-
-            val box = best.boundingBox
-
-            // Normalise centre point to 0..1
-            val centreX = ((box.left + box.right) / 2f) / frame.frameWidth
-            val centreY = ((box.top + box.bottom) / 2f) / frame.frameHeight
-
+            val box  = best.boundingBox
+            val cx   = ((box.left  + box.right)  / 2f) / frame.frameWidth
+            val cy   = ((box.top   + box.bottom) / 2f) / frame.frameHeight
             positions.add(
                 BallPosition(
                     timestampMs = frame.timestampMs,
-                    normX = centreX.coerceIn(0f, 1f),
-                    normY = centreY.coerceIn(0f, 1f)
+                    normX       = cx.coerceIn(0f, 1f),
+                    normY       = cy.coerceIn(0f, 1f)
                 )
             )
         }
-
         return positions
     }
 }

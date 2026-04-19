@@ -12,9 +12,9 @@ import org.tensorflow.lite.support.image.TensorImage
 class YoloDetector(
     var confidenceThreshold: Float = 0.5f,
     var iouThreshold: Float = 0.3f,
-    var numThreads: Int = 2,
-    var maxResults: Int = 3,
-    var currentDelegate: Int = 0,
+    var numThreads: Int = 6,
+    var maxResults: Int = 1,
+    var currentDelegate: Int = 1,
     var currentModel: Int = 0,
     val context: Context
 ): ObjectDetector {
@@ -39,7 +39,10 @@ class YoloDetector(
 
 
         val useGPU = currentDelegate == 1
+
+        android.util.Log.d("YOLO", "Loading model — useGPU=$useGPU delegate=$currentDelegate")
         yolo.loadModel(config, useGPU)
+        android.util.Log.d("YOLO", "Model loaded successfully")
 
         ip = ImageProcessing()
     }
