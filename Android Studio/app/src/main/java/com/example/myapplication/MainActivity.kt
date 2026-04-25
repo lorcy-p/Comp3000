@@ -12,6 +12,8 @@ import androidx.navigation.NavType
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import com.example.app.ui.home.HomeScreen
 import com.example.app.ui.processing.VideoProcessingScreen
+import com.example.myapplication.analysis.AnalysisScreen
+import com.example.myapplication.analysis.SavedSessionsScreen
 import com.example.myapplication.detection.VideoDetectionScreen
 import org.opencv.android.OpenCVLoader
 
@@ -33,7 +35,12 @@ class MainActivity : ComponentActivity() {
                 NavHost(navController, startDestination = "home") {
                     // Home screen
                     composable("home") {
-                        HomeScreen(navController = navController)
+                        HomeScreen(
+                            navController = navController,
+                            onViewSessionsClick = {
+                                navController.navigate("saved_sessions")
+                            }
+                        )
                     }
 
                     // Video processing screen (shows progress while loading)
@@ -62,6 +69,32 @@ class MainActivity : ComponentActivity() {
                             videoUriString = videoUri,
                             navController = navController
                         )
+                    }
+
+                    // Analysis screen — receives angles as comma-separated string
+                    composable(
+                        route = "analysis/{angles}/{shotType}",
+                        arguments = listOf(
+                            navArgument("angles") { type = NavType.StringType },
+                            navArgument("shotType") {
+                                type = NavType.StringType
+                                defaultValue = "free_throw"
+                            }
+                        )
+                    ) { backStackEntry ->
+                        val anglesString = backStackEntry.arguments?.getString("angles") ?: ""
+                        val shotType = backStackEntry.arguments?.getString("shotType") ?: "free_throw"
+                        val angles = anglesString.split(",").mapNotNull { it.toDoubleOrNull() }
+                        AnalysisScreen(
+                            shotAngles = angles,
+                            navController = navController,
+                            initialShotType = shotType
+                        )
+                    }
+
+                    // Saved sessions screen
+                    composable("saved_sessions") {
+                        SavedSessionsScreen(navController = navController)
                     }
                 }
             }

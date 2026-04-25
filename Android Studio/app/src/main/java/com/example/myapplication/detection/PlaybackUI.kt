@@ -1,5 +1,6 @@
 package com.example.myapplication.detection
 
+import android.net.Uri
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
@@ -10,6 +11,14 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SportsBasketball
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,7 +35,9 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.navigation.NavController
 import org.tensorflow.lite.examples.objectdetection.VideoOverlayView
+import kotlin.math.abs
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -45,11 +56,11 @@ fun PlaybackUI(
     shotCount: Int,
     shots: List<ShotAttempt>,
     hoopPosition: Offset,
+    navController: NavController? = null,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
     onBack: () -> Unit
 ) {
-    // Track which shot is currently active based on playback position
     val activeShotIndex by remember(currentPositionMs, shots) {
         derivedStateOf {
             shots.indexOfFirst { shot ->
@@ -58,12 +69,16 @@ fun PlaybackUI(
         }
     }
 
+    val shotAngles = remember(shots) {
+        shots.mapNotNull { it.curve?.entryAngleDeg?.let { angle -> abs(angle).toDouble() } }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // ── Top bar ──────────────────────────────────────────────────────────────────
+        // ── Top bar ──────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -79,17 +94,45 @@ fun PlaybackUI(
                     contentColor = Color.White
                 )
             ) {
-                Text("← Back")
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Back")
             }
 
-            Text(
-                text = "Pre-processed",
-                color = Color(0xFF34C759),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium
-            )
+            if (shotAngles.isNotEmpty()) {
+                Button(
+                    onClick = {
+                        val anglesParam = shotAngles.joinToString(",") { "%.2f".format(it) }
+                        navController?.navigate("analysis/${Uri.encode(anglesParam)}/free_throw")
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0A84FF),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Analytics,
+                        contentDescription = "Analyse",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Analyse Shots")
+                }
+            } else {
+                Text(
+                    text = "Pre-processed",
+                    color = Color(0xFF34C759),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
-        // ── Video ────────────────────────────────────────────────────────
+
+        // ── Video ────────────────────────────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -132,7 +175,6 @@ fun PlaybackUI(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Shot arc drawn on top of the video
             ShotArcOverlay(
                 shot = shots.getOrNull(activeShotIndex),
                 hoopPosition = hoopPosition,
@@ -141,7 +183,6 @@ fun PlaybackUI(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Active shot badge
             if (activeShotIndex >= 0) {
                 Box(
                     modifier = Modifier
@@ -153,7 +194,7 @@ fun PlaybackUI(
                     Text(
                         text = "Shot ${activeShotIndex + 1}  •  ${
                             shots.getOrNull(activeShotIndex)?.curve?.entryAngleDeg
-                                ?.let { "%.1f°".format(kotlin.math.abs(it)) } ?: "N/A"
+                                ?.let { "%.1f°".format(abs(it)) } ?: "N/A"
                         }",
                         color = Color.White,
                         fontSize = 13.sp,
@@ -171,14 +212,25 @@ fun PlaybackUI(
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = if (currentDetectionCount > 0)
-                    "🏀 $currentDetectionCount ball${if (currentDetectionCount != 1) "s" else ""} detected"
-                else
-                    "No ball detected",
-                color = if (currentDetectionCount > 0) Color.White else Color.Gray,
-                fontSize = 14.sp
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    Icons.Default.SportsBasketball,
+                    contentDescription = null,
+                    tint = if (currentDetectionCount > 0) Color(0xFFFF9500) else Color.Gray,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = if (currentDetectionCount > 0)
+                        "$currentDetectionCount ball${if (currentDetectionCount != 1) "s" else ""} detected"
+                    else
+                        "No ball detected",
+                    color = if (currentDetectionCount > 0) Color.White else Color.Gray,
+                    fontSize = 14.sp
+                )
+            }
 
             Spacer(modifier = Modifier.height(6.dp))
 
@@ -202,7 +254,15 @@ fun PlaybackUI(
                         containerColor = Color(0xFF1C1C1E),
                         contentColor = Color.White
                     )
-                ) { Text("⏪ 5s") }
+                ) {
+                    Icon(
+                        Icons.Default.FastRewind,
+                        contentDescription = "Rewind 5s",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("5s")
+                }
 
                 Button(
                     onClick = onPlayPause,
@@ -212,7 +272,11 @@ fun PlaybackUI(
                     ),
                     modifier = Modifier.size(60.dp)
                 ) {
-                    Text(if (isPlaying) "⏸" else "▶", fontSize = 20.sp)
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        modifier = Modifier.size(28.dp)
+                    )
                 }
 
                 Button(
@@ -225,7 +289,15 @@ fun PlaybackUI(
                         containerColor = Color(0xFF1C1C1E),
                         contentColor = Color.White
                     )
-                ) { Text("5s ⏩") }
+                ) {
+                    Text("5s")
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        Icons.Default.FastForward,
+                        contentDescription = "Forward 5s",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -316,7 +388,7 @@ private fun ShotCard(
     val bgColor = if (isActive) Color(0xFF2A1F00) else Color(0xFF1C1C1E)
 
     val angleText = shot.curve?.entryAngleDeg
-        ?.let { "%.1f°".format(kotlin.math.abs(it)) } ?: "N/A"
+        ?.let { "%.1f°".format(abs(it)) } ?: "N/A"
 
     val (qualityLabel, qualityColor) = if (shot.curve != null) {
         QuadraticFitter.angleQuality(shot.curve.entryAngleDeg)
@@ -339,7 +411,6 @@ private fun ShotCard(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // Shot number
         Text(
             text = "${index + 1}",
             color = if (isActive) Color(0xFFFF9500) else Color.White,
@@ -349,7 +420,6 @@ private fun ShotCard(
 
         HorizontalDivider(color = Color(0xFF2C2C2E), thickness = 0.5.dp)
 
-        // Entry angle
         Text(
             text = angleText,
             color = Color.White,
@@ -358,7 +428,6 @@ private fun ShotCard(
             textAlign = TextAlign.Center
         )
 
-        // Quality label
         Box(
             modifier = Modifier
                 .background(qualityColor.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
@@ -371,14 +440,6 @@ private fun ShotCard(
                 fontWeight = FontWeight.SemiBold
             )
         }
-    }
-}
-
-@Composable
-private fun StatItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Text(label, color = Color.Gray, fontSize = 12.sp)
     }
 }
 

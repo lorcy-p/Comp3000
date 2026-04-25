@@ -160,7 +160,7 @@ fun VideoDetectionScreen(
                 )
             }
 
-            // New — inserted between Processing and Complete
+            // inserted between Processing and Complete
             is ProcessingState.AwaitingHoopSelection -> {
                 HoopSelectionScreen(
                     cacheFilePath = state.result.cacheFile.absolutePath,
@@ -187,8 +187,9 @@ fun VideoDetectionScreen(
                     totalDetections = state.result.totalDetections,
                     processingTimeMs = state.result.processingTimeMs,
                     shotCount = state.shots.size,
-                    shots = state.shots,            // new
+                    shots = state.shots,
                     hoopPosition = state.hoopPosition,
+                    navController = navController,
                     onPlayPause = {
                         val player = exoPlayer ?: return@PlaybackUI
                         if (player.isPlaying) { player.pause(); isPlaying = false }

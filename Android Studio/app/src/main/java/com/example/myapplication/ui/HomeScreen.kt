@@ -1,16 +1,21 @@
 package com.example.app.ui.home
 
+import android.Manifest
+import android.content.ContentValues
+import android.content.Context
 import android.net.Uri
+import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -21,16 +26,47 @@ import androidx.navigation.NavController
 fun HomeScreen(
     modifier: Modifier = Modifier,
     navController: NavController? = null,
-    onRecordClick: () -> Unit = {},
     onViewSessionsClick: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+
     // Video picker launcher - navigates directly to detection screen
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            // Navigate directly to detection screen with video URI
             navController?.navigate("detection/${Uri.encode(it.toString())}")
+        }
+    }
+
+    // Video recording support
+    var recordedVideoUri by remember { mutableStateOf<Uri?>(null) }
+
+    val videoRecordLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CaptureVideo()
+    ) { success ->
+        if (success && recordedVideoUri != null) {
+            val encoded = Uri.encode(recordedVideoUri.toString())
+            navController?.navigate("detection/$encoded")
+        } else {
+            // Recording was cancelled or failed — clean up the empty URI
+            recordedVideoUri?.let { uri ->
+                context.contentResolver.delete(uri, null, null)
+            }
+            recordedVideoUri = null
+        }
+    }
+
+    // Camera permission launcher — once granted, launch the recorder
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val uri = createVideoUri(context)
+            if (uri != null) {
+                recordedVideoUri = uri
+                videoRecordLauncher.launch(uri)
+            }
         }
     }
 
@@ -65,15 +101,18 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Buttons
+            // Record button - requests permission then opens native camera
             HomeActionButton(
                 text = "Record New Video",
                 icon = android.R.drawable.ic_menu_camera,
-                onClick = onRecordClick
+                onClick = {
+                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Upload button - opens gallery picker
             HomeActionButton(
                 text = "Upload Video",
                 icon = android.R.drawable.ic_menu_slideshow,
@@ -98,6 +137,21 @@ fun HomeScreen(
             )
         }
     }
+}
+
+/**
+ * Creates a content URI for a new video file in the device's MediaStore.
+ * The native camera app will write the recorded video to this location.
+ */
+private fun createVideoUri(context: Context): Uri? {
+    val contentValues = ContentValues().apply {
+        put(MediaStore.Video.Media.DISPLAY_NAME, "shottrack_${System.currentTimeMillis()}.mp4")
+        put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+    }
+    return context.contentResolver.insert(
+        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+        contentValues
+    )
 }
 
 @Composable
