@@ -1,45 +1,19 @@
-import cv2
 from ultralytics import YOLO
 import random
 
-# Load the best model
-model = YOLO("best.pt")  
 
-# Open webcam
-cap = cv2.VideoCapture(0)
+def main():
+    yaml_path = "Comp-3001--4/data.yaml"
 
+    model = YOLO("YOLO11Small.pt")
+    print("epoch")
+    print(model.ckpt.get('epoch'))
+    metrics = model.val(data=yaml_path, imgsz=736)
 
-while True:
-    ret, frame = cap.read()
-    
-    
-    results = model(frame)
+    print(metrics.box.map)
+    print(metrics.box.map50)
+    print(metrics.box.mp)
+    print(metrics.box.mr)
 
-    # For each basket detection
-    for r in results:
-        for box in r.boxes:
-            conf = float(box.conf[0])
-            if conf < 0.4:
-                continue
-
-            cls = int(box.cls[0])
-            
-
-            # Bounding box
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 0), 2)
-
-            # Label
-            label = f"{r.names[cls]} {conf:.2f}"
-            cv2.putText(frame, label, (x1, max(20, y1 - 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-
-    # Show frame
-    cv2.imshow("YOLO ", frame)
-
-    # Press 'q' to exit
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-cap.release()
-cv2.destroyAllWindows()
+if __name__ == '__main__':
+    main()

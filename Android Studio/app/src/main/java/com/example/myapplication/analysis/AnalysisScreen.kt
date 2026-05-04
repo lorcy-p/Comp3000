@@ -257,7 +257,7 @@ fun AngleHeatmap(
     shotType: String,
     modifier: Modifier = Modifier
 ) {
-    val optimalRange = if (shotType == "free_throw") 45.0..52.0 else 48.0..55.0
+    val optimalRange = if (shotType == "free_throw") 45.0..55.0 else 43.0..47.0
 
     val binWidth = 2.0
     val binStart = 20.0

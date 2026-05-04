@@ -8,7 +8,7 @@ object ShotAnalysis {
     // Free throws: 45-50° - optimal angle reducing total distance travelled and cross section of hoop
     // Three pointers: 43-47° — lower arc dues to further distance needed
     private val OPTIMAL_RANGES = mapOf(
-        "free_throw" to (45.0..50.0),
+        "free_throw" to (45.0..55.0),
         "three_pointer" to (43.0..47.0)
     )
 

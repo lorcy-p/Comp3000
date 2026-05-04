@@ -3,7 +3,7 @@
 /YOLO11Trainer/runs
 /YOLO11Trainer/Yolo-Weights
 .vscode/settings.json
-YOLO11Trainer/Comp-3001--4
+YOLO11Trainer/Comp-3000--4
 
 # Miscellaneous
 *.class
@@ -30,15 +30,7 @@ migrate_working_dir/
 # is commented out by default.
 #.vscode/
 
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
+YOLO11Trainer/ModelsForTesting
 
 # Symbolication related
 app.*.symbols
