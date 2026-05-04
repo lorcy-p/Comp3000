@@ -18,6 +18,7 @@ YOLO11Trainer/Comp-3000--4
 .svn/
 .swiftpm/
 migrate_working_dir/
+.gradle/
 
 # IntelliJ related
 *.iml
